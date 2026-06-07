@@ -1,6 +1,11 @@
 # examples/full_system_demo.py
 
 import asyncio
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from agents.orchestrator import Orchestrator
 from smc.smc_layer_masterpiece import load_ohlcv_csv
 
