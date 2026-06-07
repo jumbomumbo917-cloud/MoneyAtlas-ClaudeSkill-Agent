@@ -1,25 +1,27 @@
 # cli/run_pkr_demo.py
 #
-# DEMO: trading a PKR 5,000 account on gold (XAUUSD), anchored on the real
-# spot price from the user's screenshot ($4,331, Jun 07 2026).
+# DEMO: trading a PKR 10,000 account on gold (XAUUSD), anchored on the real
+# intraday spot from the Exness Analytics screen ($4,325, 8 Jun 2026).
 #
-# The point of this demo is to show, honestly, what a ~$18 account can and
-# cannot do — and how lot sizing has to adapt (Exness Cent account + tight
-# scalp stop) for the trade to even be placeable.
+# Shows honestly what a ~$36 account can and cannot do, how lot sizing adapts
+# (Exness Cent account + tight scalp stop), and how the HMR news-window guard
+# clamps leverage during high-impact events — mirroring Exness itself.
 #
 # Runs fully offline. No broker, no credentials.
 
 import os
 import random
 import sys
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from execution.paper_account import PaperAccount
+from execution.news_guard import NewsGuard
 
 PKR_PER_USD = 280.0          # approximate; FX rate moves
-PKR_BALANCE = 5000.0
-GOLD_SPOT = 4331.0           # real spot from the screenshot
+PKR_BALANCE = 10000.0
+GOLD_SPOT = 4325.0           # real intraday spot from the Exness Analytics screen
 
 # Gold contract sizes (units = ounces per 1.00 lot)
 STANDARD_OZ = 100            # standard/micro account: 1 lot = 100 oz
@@ -64,24 +66,37 @@ def main():
     print(f"           risk ${swing_stop*STANDARD_OZ*MIN_LOT:.2f} = "
           f"{swing_stop*STANDARD_OZ*MIN_LOT/bal_usd*100:.0f}% of the account. Blow-up risk.\n")
 
-    # --- The brain part: Cent account + tight scalp stop makes it work ---
+    # --- The brain part: Cent account + tight scalp stop, with news guard ---
+    # Bias is SHORT (Exness signal: short below 4400, targets 4305/4230).
     scalp_stop = 5.0    # tight intraday scalp stop
-    print("--- Adapted plan: Exness CENT account + $5 scalp stop ---")
-    acct = PaperAccount(balance=bal_usd, leverage=500, risk_per_trade=risk_pct, spread=0.30)
+    print("--- Adapted plan: Exness CENT account + $5 scalp stop + HMR news guard ---")
+    acct = PaperAccount(
+        balance=bal_usd, leverage=500, risk_per_trade=risk_pct, spread=0.30,
+        news_guard=NewsGuard(),   # clamps leverage to broker cap during news windows
+    )
     entry = GOLD_SPOT
-    sl = entry - scalp_stop          # long scalp
-    tp = entry + scalp_stop * 2      # 2R target
+    sl = entry + scalp_stop          # short scalp: stop above
+    tp = entry - scalp_stop * 2      # 2R target below
 
     lots = acct.position_size(entry, sl, CENT_OZ)
-    print(f"  Entry {entry:.2f} | SL {sl:.2f} (-${scalp_stop}) | TP {tp:.2f} (+${scalp_stop*2}) | 2R")
+    print(f"  Bias SHORT | Entry {entry:.2f} | SL {sl:.2f} (+${scalp_stop}) | "
+          f"TP {tp:.2f} (-${scalp_stop*2}) | 2R")
     print(f"  Sized lot (cent, 1 lot = 1 oz): {lots}  → above min {MIN_LOT}: "
           f"{'YES' if lots >= MIN_LOT else 'NO'}")
 
-    pos = acct.open("XAUUSDc", "long", entry, sl, tp, CENT_OZ)
+    # Show the news guard in action: a quiet time vs the 10:45 HMR window.
+    quiet = datetime(2026, 6, 8, 8, 0)
+    news = datetime(2026, 6, 8, 10, 50)   # inside Factory Orders HMR window
+    dq = acct.news_guard.evaluate(acct.leverage, quiet)
+    dn = acct.news_guard.evaluate(acct.leverage, news)
+    print(f"\n  News guard @ 08:00 (quiet): leverage 1:{dq.effective_leverage} (no restriction)")
+    print(f"  News guard @ 10:50 (news):  leverage 1:{dn.effective_leverage}  — {dn.reason}")
+
+    pos = acct.open("XAUUSDc", "short", entry, sl, tp, CENT_OZ, when=quiet)
     if not pos:
         print("  Order rejected.")
         return
-    print(f"  FILLED: long {pos.lots} lot @ {pos.entry}\n")
+    print(f"\n  FILLED: short {pos.lots} lot @ {pos.entry} (placed in quiet window)\n")
 
     # --- Walk the price path to resolve the scalp ---
     for o, hi, lo, c in generate_gold_path(GOLD_SPOT):
