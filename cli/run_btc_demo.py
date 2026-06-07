@@ -1,13 +1,18 @@
 # cli/run_btc_demo.py
 #
-# DEMO: BTC/USD hourly trading on a PKR 10,000 account, using the REAL levels
-# from the Exness screen (8 Jun 2026):
-#   bid 63,125.10 | ask 63,135.18 | spread $10.08 | 4H downtrend
-#   recent low 59,073 (support) | overhead resistance 66,700
+# DEMO: BTC/USD hourly trading on a PKR-denominated Exness account.
 #
-# Simulates BOTH plays the analysis described, auto-sized at 10% risk / 1:500:
-#   A) counter-trend LONG scalp off the bounce
-#   B) with-trend SHORT on a failed retest of resistance
+# Account is in PKR, so balance / margin / risk / P&L are all PKR.
+# BTC price levels (entry / SL / TP) stay in their USD quote, because
+# BTC/USD is always *priced* in dollars regardless of account currency.
+#
+# Real values from the Exness screen (8 Jun 2026):
+#   bid 63,125.10 | ask 63,135.18 | spread $10.08 | 4H downtrend
+#   support 59,073 | resistance 66,700
+#
+# PKR-native trick: PaperAccount computes P&L = move * lots * contract_size.
+# For BTC, 1 lot = 1 BTC and a $1 move = $1; to express that in PKR we set
+# contract_size = 1 BTC * PKR_PER_USD, so every result comes out in PKR.
 #
 # Fully offline. No broker, no credentials.
 
@@ -19,23 +24,26 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from execution.paper_account import PaperAccount
 
-PKR_PER_USD = 280.0
-PKR_BALANCE = 10000.0
+PKR_PER_USD = 280.0          # FX rate moves; verify current rate
 
-# Real market values from the screenshot
+PKR_BALANCE = 10000.0        # account is in PKR
+
+# Real market values (BTC price quoted in USD)
 BID = 63125.10
 ASK = 63135.18
-SPREAD = ASK - BID            # $10.08
+SPREAD = ASK - BID           # $10.08 in quote points
 SUPPORT = 59073.29
 RESISTANCE = 66700.64
 
 LEVERAGE = 500
-RISK_PCT = 0.10              # user accepts up to 10% per trade
-BTC_CONTRACT = 1            # Exness BTCUSD: 1 lot = 1 BTC
+RISK_PCT = 0.10              # up to 10% per trade
+
+# 1 BTC lot priced into PKR: 1 BTC * PKR/USD -> account math is all PKR
+PKR_CONTRACT = 1 * PKR_PER_USD
 
 
 def gen_path(start, drift, n=30, vol=120, seed=1):
-    """Synthetic hourly BTC path: drift sets direction, vol sets candle range."""
+    """Synthetic hourly BTC path (USD quote): drift = direction, vol = candle range."""
     random.seed(seed)
     price = start
     out = []
@@ -49,23 +57,25 @@ def gen_path(start, drift, n=30, vol=120, seed=1):
     return out
 
 
-def run_scenario(label, direction, entry, stop, target, path, seed):
-    acct = PaperAccount(balance=PKR_BALANCE / PKR_PER_USD, leverage=LEVERAGE,
+def run_scenario(label, direction, entry, stop, target, path):
+    acct = PaperAccount(balance=PKR_BALANCE, leverage=LEVERAGE,
                         risk_per_trade=RISK_PCT, spread=SPREAD)
-    sizing = acct.size(entry, stop, BTC_CONTRACT)
+    sizing = acct.size(entry, stop, PKR_CONTRACT)
     stop_dist = abs(entry - stop)
 
     print(f"\n=== {label} ===")
-    print(f"  {direction.upper()} entry {entry:,.0f} | SL {stop:,.0f} (${stop_dist:,.0f}) | "
-          f"TP {target:,.0f} | {abs(target-entry)/stop_dist:.1f}R")
-    print(f"  Auto-sized: {sizing.lots} lot | risk PKR {sizing.risk_amount*PKR_PER_USD:,.0f} "
-          f"({sizing.risk_pct_actual}%) | margin PKR {sizing.margin_required*PKR_PER_USD:,.0f}")
-    spread_cost = SPREAD * sizing.lots * BTC_CONTRACT
-    print(f"  Spread cost on entry: PKR {spread_cost*PKR_PER_USD:,.0f}")
+    print(f"  {direction.upper()}")
+    print(f"  Entry (BTC/USD quote): {entry:,.2f}")
+    print(f"  Stop-loss            : {stop:,.2f}   (${stop_dist:,.0f} away)")
+    print(f"  Take-profit          : {target:,.2f}   ({abs(target-entry)/stop_dist:.1f}R)")
+    print(f"  Lot size (auto)      : {sizing.lots} lot")
+    print(f"  Risk                 : PKR {sizing.risk_amount:,.0f} ({sizing.risk_pct_actual}%)")
+    print(f"  Margin locked        : PKR {sizing.margin_required:,.0f}")
+    print(f"  Spread cost on entry : PKR {SPREAD * sizing.lots * PKR_CONTRACT:,.0f}")
 
-    pos = acct.open("BTCUSD", direction, entry, stop, target, BTC_CONTRACT)
+    pos = acct.open("BTCUSD", direction, entry, stop, target, PKR_CONTRACT)
     if not pos:
-        print(f"  REJECTED: {sizing.reason}")
+        print(f"  REJECTED: {sizing.reason or 'spread tipped risk over the limit'}")
         return
 
     for o, hi, lo, c in path:
@@ -77,33 +87,31 @@ def run_scenario(label, direction, entry, stop, target, path, seed):
         acct.close_all("BTCUSD", path[-1][3])
 
     t = acct.history[-1]
-    print(f"  RESULT: {t.direction} {t.lots} @ {t.entry:,.0f} -> {t.exit:,.0f} ({t.reason}) "
-          f"| P&L ${t.pnl:+.2f} = PKR {t.pnl*PKR_PER_USD:+,.0f}")
-    print(f"  Ending balance: PKR {acct.balance*PKR_PER_USD:,.0f}")
+    print(f"  --> {t.reason.upper()} at {t.exit:,.2f}")
+    print(f"  --> P&L: PKR {t.pnl:+,.0f}")
+    print(f"  --> Balance: PKR {PKR_BALANCE:,.0f} -> PKR {acct.balance:,.0f}")
 
 
 def main():
-    bal = PKR_BALANCE / PKR_PER_USD
-    print(f"BTC/USD demo | PKR {PKR_BALANCE:,.0f} (${bal:.2f}) | 1:{LEVERAGE} | "
-          f"risk {RISK_PCT*100:.0f}% | spread ${SPREAD:.2f}")
-    print(f"Real levels: support {SUPPORT:,.0f} | spot {ASK:,.0f} | resistance {RESISTANCE:,.0f}")
+    print(f"BTC/USD demo | Account PKR {PKR_BALANCE:,.0f} | 1:{LEVERAGE} | "
+          f"risk {RISK_PCT*100:.0f}% | spread ${SPREAD:.2f} | rate {PKR_PER_USD} PKR/USD")
+    print(f"Real levels (USD quote): support {SUPPORT:,.0f} | "
+          f"spot {ASK:,.0f} | resistance {RESISTANCE:,.0f}")
 
-    # A) Counter-trend long scalp off the bounce ($300 stop ~8.4%, leaves room for spread)
     run_scenario(
-        "A) Counter-trend LONG scalp", "long",
+        "A) Counter-trend LONG scalp (off the bounce)", "long",
         entry=ASK, stop=ASK - 300, target=ASK + 600,
-        path=gen_path(ASK, drift=45, vol=110, seed=3), seed=3,
+        path=gen_path(ASK, drift=45, vol=110, seed=3),
     )
 
-    # B) With-trend short on a failed retest of resistance
     run_scenario(
         "B) With-trend SHORT (failed retest of resistance)", "short",
         entry=RESISTANCE, stop=RESISTANCE + 300, target=RESISTANCE - 600,
-        path=gen_path(RESISTANCE, drift=-55, vol=110, seed=7), seed=7,
+        path=gen_path(RESISTANCE, drift=-55, vol=110, seed=7),
     )
 
-    print("\nNote: leverage 1:500 only lowered the margin locked; the risk (PKR ~1,000")
-    print("at 10%) is identical to any other leverage. Stop + size set the risk.")
+    print("\nNote: prices are BTC/USD quotes; everything account-side is PKR.")
+    print("1:500 only lowers the margin locked — risk is set by stop + lot.")
 
 
 if __name__ == "__main__":
