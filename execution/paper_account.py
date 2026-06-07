@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional
 
+from execution.position_sizer import size_position, SizingResult
+
 
 @dataclass
 class PaperPosition:
@@ -45,6 +47,8 @@ class PaperAccount:
     leverage: int = 500                 # Exness offers high leverage; default 1:500
     risk_per_trade: float = 0.01        # 1% of equity risked per position
     spread: float = 0.30                # price units added on entry (e.g. gold ~$0.30)
+    min_lot: float = 0.01               # broker minimum order size
+    lot_step: float = 0.01              # broker lot increment
     positions: List[PaperPosition] = field(default_factory=list)
     history: List[ClosedTrade] = field(default_factory=list)
 
@@ -52,29 +56,28 @@ class PaperAccount:
     def equity(self) -> float:
         return self.balance
 
+    def size(self, entry: float, stop_loss: float, contract_size: float) -> SizingResult:
+        """Full compliance-aware sizing: risk %, broker min/step, and margin."""
+        return size_position(
+            balance=self.balance, leverage=self.leverage, risk_pct=self.risk_per_trade,
+            entry=entry, stop_loss=stop_loss, contract_size=contract_size,
+            min_lot=self.min_lot, lot_step=self.lot_step,
+        )
+
     def position_size(self, entry: float, stop_loss: float, contract_size: float) -> float:
-        """Risk-based lot sizing: risk_amount / (stop_distance * contract_size)."""
-        risk_amount = self.balance * self.risk_per_trade
-        stop_distance = abs(entry - stop_loss)
-        if stop_distance == 0:
-            return 0.0
-        lots = risk_amount / (stop_distance * contract_size)
-        return round(lots, 2)
+        """Backward-compatible helper: returns just the compliant lot (0.0 if none)."""
+        return self.size(entry, stop_loss, contract_size).lots
 
     def open(self, symbol, direction, entry, stop_loss, take_profit, contract_size) -> Optional[PaperPosition]:
         # apply spread against the trader on entry
         fill = entry + self.spread if direction == "long" else entry - self.spread
-        lots = self.position_size(fill, stop_loss, contract_size)
-        if lots <= 0:
-            return None
 
-        # reject if notional exceeds available leverage
-        notional = lots * contract_size * fill
-        if notional > self.balance * self.leverage:
+        sizing = self.size(fill, stop_loss, contract_size)
+        if not sizing.tradeable:
             return None
 
         pos = PaperPosition(
-            symbol=symbol, direction=direction, lots=lots, entry=round(fill, 2),
+            symbol=symbol, direction=direction, lots=sizing.lots, entry=round(fill, 2),
             stop_loss=stop_loss, take_profit=take_profit,
             contract_size=contract_size, opened_at=datetime.utcnow().isoformat(),
         )
