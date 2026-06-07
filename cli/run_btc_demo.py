@@ -28,15 +28,18 @@ PKR_PER_USD = 280.0          # FX rate moves; verify current rate
 
 PKR_BALANCE = 10000.0        # account is in PKR
 
-# Real market values (BTC price quoted in USD)
-BID = 63125.10
-ASK = 63135.18
+# Real market values (BTC price quoted in USD) — updated from latest screen
+BID = 63233.64
+ASK = 63243.72
 SPREAD = ASK - BID           # $10.08 in quote points
 SUPPORT = 59073.29
-RESISTANCE = 66700.64
+RESISTANCE = 66644.65
 
 LEVERAGE = 500
 RISK_PCT = 0.10              # up to 10% per trade
+
+# Rough BTC hourly range used to ESTIMATE holding time (verify against live ATR)
+BTC_HOURLY_RANGE = 350.0     # ~typical $ move per 1h candle in current conditions
 
 # 1 BTC lot priced into PKR: 1 BTC * PKR/USD -> account math is all PKR
 PKR_CONTRACT = 1 * PKR_PER_USD
@@ -72,6 +75,13 @@ def run_scenario(label, direction, entry, stop, target, path):
     print(f"  Risk                 : PKR {sizing.risk_amount:,.0f} ({sizing.risk_pct_actual}%)")
     print(f"  Margin locked        : PKR {sizing.margin_required:,.0f}")
     print(f"  Spread cost on entry : PKR {SPREAD * sizing.lots * PKR_CONTRACT:,.0f}")
+
+    # Holding-time estimate: distance to target / typical hourly range.
+    tp_hours = abs(target - entry) / BTC_HOURLY_RANGE
+    sl_hours = stop_dist / BTC_HOURLY_RANGE
+    time_stop = max(2, round(tp_hours * 2))
+    print(f"  Est. time to TP      : ~{tp_hours:.1f}h  (SL could hit in ~{sl_hours:.1f}h)")
+    print(f"  Time-stop (exit if flat): {time_stop}h — don't let a stalled scalp tie up risk")
 
     pos = acct.open("BTCUSD", direction, entry, stop, target, PKR_CONTRACT)
     if not pos:
