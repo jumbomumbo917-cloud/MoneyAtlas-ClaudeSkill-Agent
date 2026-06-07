@@ -14,15 +14,15 @@ class SignalEngine:
 
     def generate_signal(self, layer_map) -> Optional[TradeSignal]:
 
-        # ใช้ Layer 2-3 เป็น Entry Zone
-        layer2 = layer_map.layers[1]
-        layer3 = layer_map.layers[2]
+        # Long thesis: accumulate in L1, target the L3 decision zone.
+        accumulation = layer_map.layers[0]   # L1 — accumulation
+        decision = layer_map.layers[2]       # L3 — decision zone
 
-        if layer2.state == "accumulating" and layer2.confidence > 0.6:
+        if accumulation.state == "accumulating" and accumulation.confidence > 0.6:
 
-            entry = (layer2.price_low + layer2.price_high) / 2
-            sl = layer2.price_low * 0.98
-            tp = layer3.price_high
+            entry = (accumulation.price_low + accumulation.price_high) / 2
+            sl = accumulation.price_low * 0.98
+            tp = decision.price_high
 
             return TradeSignal(
                 symbol=layer_map.symbol,
@@ -30,7 +30,7 @@ class SignalEngine:
                 entry=entry,
                 stop_loss=sl,
                 take_profit=tp,
-                confidence=layer2.confidence
+                confidence=accumulation.confidence
             )
 
         return None
