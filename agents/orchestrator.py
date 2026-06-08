@@ -6,6 +6,7 @@ from .macro_agent import MacroAgent
 from .smc_agent import SMCAgent
 from .sentiment_agent import SentimentAgent
 from .risk_agent import RiskAgent
+from .genesis_agent import GenesisAgent
 from .portfolio_agent import PortfolioAgent
 
 
