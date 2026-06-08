@@ -40,6 +40,7 @@ RISK_PCT = 0.10              # up to 10% per trade
 
 # Rough BTC hourly range used to ESTIMATE holding time (verify against live ATR)
 BTC_HOURLY_RANGE = 350.0     # ~typical $ move per 1h candle in current conditions
+ATR_4H = 1314.93             # REAL 4H ATR from the indicator screen
 
 # 1 BTC lot priced into PKR: 1 BTC * PKR/USD -> account math is all PKR
 PKR_CONTRACT = 1 * PKR_PER_USD
@@ -60,9 +61,9 @@ def gen_path(start, drift, n=30, vol=120, seed=1):
     return out
 
 
-def run_scenario(label, direction, entry, stop, target, path):
+def run_scenario(label, direction, entry, stop, target, path, risk_pct=RISK_PCT):
     acct = PaperAccount(balance=PKR_BALANCE, leverage=LEVERAGE,
-                        risk_per_trade=RISK_PCT, spread=SPREAD)
+                        risk_per_trade=risk_pct, spread=SPREAD)
     sizing = acct.size(entry, stop, PKR_CONTRACT)
     stop_dist = abs(entry - stop)
 
@@ -120,8 +121,19 @@ def main():
         path=gen_path(RESISTANCE, drift=-55, vol=110, seed=7),
     )
 
+    # C) NEW: with-trend SHORT now, ATR-based stop, 30% risk accepted.
+    # Stop ~0.76x ATR (outside single-candle noise); target rides toward the low.
+    atr_stop = 1000.0   # ~0.76x the $1,315 4H ATR; risk lands ~28% at 0.01 lot
+    run_scenario(
+        "C) ATR-BASED with-trend SHORT (30% risk, sound stop)", "short",
+        entry=BID, stop=BID + atr_stop, target=BID - atr_stop * 2,   # 2R
+        path=gen_path(BID, drift=-90, vol=180, seed=11),
+        risk_pct=0.30,
+    )
+
     print("\nNote: prices are BTC/USD quotes; everything account-side is PKR.")
-    print("1:500 only lowers the margin locked — risk is set by stop + lot.")
+    print(f"Scenario C stop = ${atr_stop:,.0f} = {atr_stop/ATR_4H:.2f}x ATR — finally OUTSIDE")
+    print("the noise. That is what the 30% risk tolerance buys you on a PKR 10k account.")
 
 
 if __name__ == "__main__":
